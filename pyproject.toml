@@ -1,0 +1,25 @@
+[project]
+name = "ex7-consumer"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Matheus Perira",email = "pnmatheus01@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3",
+    "python-dotenv",
+    "asyncpg",
+    "tortoise-orm",
+    "avro",
+    "pandas"
+]
+
+[tool.poetry]
+packages = [{include = "ex7_consumer", from = "src"}]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
