@@ -1,21 +1,58 @@
-FROM python:3.10.18-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install poetry
-RUN pip install poetry
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Copy poetry lock and pyproject files
-COPY poetry.lock pyproject.toml ./
+ARG YOUR_ENV=production
 
-# Configure poetry to not create a virtualenv
-RUN poetry config virtualenvs.create false
+ENV YOUR_ENV=${YOUR_ENV} \
+  PYTHONFAULTHANDLER=1 \
+  PYTHONUNBUFFERED=1 \
+  PYTHONHASHSEED=random \
+  PIP_NO_CACHE_DIR=off \
+  PIP_DISABLE_PIP_VERSION_CHECK=on \
+  PIP_DEFAULT_TIMEOUT=100 \
+  # Poetry's configuration:
+  POETRY_NO_INTERACTION=1 \
+  POETRY_VIRTUALENVS_CREATE=false \
+  POETRY_CACHE_DIR='/var/cache/pypoetry' \
+  POETRY_HOME='/usr/local' \
+  POETRY_VERSION=2.2.0
 
-# Install dependencies
-RUN poetry install --no-root --no-dev
+# Install Java, wget and tar (use the distro default JDK to avoid package name mismatches)
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends \
+	   default-jdk-headless \
+	   wget \
+	   tar \
+	   curl \
+	   git \
+	   ca-certificates \
+	   build-essential \
+	   python3-dev \
+	   libssl-dev \
+	   libffi-dev \
+	   pkg-config \
+	   maven \
+	&& rm -rf /var/lib/apt/lists/*
 
-# Copy the rest of the application
-COPY . .
+# System deps:
+RUN curl -sSL https://install.python-poetry.org | python3 -
 
-# Command to run the application
-CMD ["poetry", "run", "python", "src/ex7_consumer/app.py"]
+# Copy project files
+COPY . /app
+
+RUN poetry lock
+RUN poetry install $(test "$YOUR_ENV" == production && echo "--only=main") --no-interaction --no-ansi
+
+ENV JAVA_HOME=/usr/lib/jvm/default-java
+ENV PATH="$JAVA_HOME/bin:$PATH"
+
+# Copy project files
+COPY . /app
+
+# Expose logs (optional)
+VOLUME ["/app/logs"]
+
+ENV JAVA_HOME=${JAVA_HOME}

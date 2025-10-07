@@ -1,23 +1,20 @@
 [project]
-name = "ex7-consumer"
+name = "ex8-consumer"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "Matheus Perira",email = "pnmatheus01@gmail.com"}
+    {name = "Matheus Pereira",email = "pnmatheus01@gmail.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "boto3",
+    "pyspark==3.5.1",
     "python-dotenv",
-    "asyncpg",
-    "tortoise-orm",
-    "avro",
-    "pandas"
+    "avro"
 ]
 
 [tool.poetry]
-packages = [{include = "ex7_consumer", from = "src"}]
+packages = [{include = "ex8_consumer", from = "src"}]
 
 
 [build-system]

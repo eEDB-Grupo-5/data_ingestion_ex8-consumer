@@ -1,117 +1,94 @@
-# Project Documentation
+# ex8-consumer
 
-## Project Overview
+This repository contains a PySpark-based streaming consumer that reads Avro-encoded messages from Kafka, enriches and aggregates the data using reference tables from PostgreSQL, writes cleaned data back to PostgreSQL, and exports aggregated results to S3 as Parquet files.
 
-This project is a consumer application that processes messages from an AWS SQS queue, saves the data to a PostgreSQL database, and periodically exports data from the database to AWS S3 in Parquet format.
+The project is structured for local development and can be run inside Docker via the provided `docker-compose.yml`.
 
-## Architecture
+## Contents
 
-The application is composed of the following components:
+- `src/ex8_consumer/app.py` — main application. Sets up Spark session, reads from Kafka, deserializes Avro, performs transformations and aggregations, writes streaming results to PostgreSQL and S3.
+- `src/ex8_consumer/settings.py` — configuration module that reads environment variables used by the app.
+- `src/ex8_consumer/schemas/reclamacoes.avsc` — Avro schema used to deserialize Kafka messages.
+- `docker-compose.yml` — docker-compose file for running the consumer container. Uses `env_file: .env` to load environment variables.
+- `.env` — environment variables (AWS, Postgres). Not tracked by Git in many setups — used here for local development.
 
-- **SQS Consumer**: Polls an SQS queue for messages.
-- **Avro Deserializer**: Deserializes the message body from Avro format.
-- **Database Writer**: Saves the deserialized data to a PostgreSQL database.
-- **Data Exporter**: Periodically queries the database and exports the data to S3 in Parquet format.
+## Design overview
 
-The application is asynchronous and uses `asyncio` for concurrency.
+The consumer implements a Spark Structured Streaming pipeline:
 
-## Modules
+- A Kafka streaming source reads Avro-encoded messages from a configured topic.
+- Messages are deserialized using an Avro schema loaded from `src/ex8_consumer/schemas/reclamacoes.avsc`.
+- The pipeline writes cleaned records to a Postgres table `trusted.reclamacoes_cleaned` using `foreachBatch` on a micro-batch basis.
+- A subsequent SQL aggregation joins the cleaned stream with static JDBC tables (`trusted.empregados` and `trusted.bancos`) and produces `result_df`.
+- `result_df` is written using `foreachBatch` to both Postgres and S3 (as Parquet) with checkpointing for fault tolerance.
 
-### `app.py`
+## Modules and key functions
 
-This is the main application module. It initializes the database, gets the SQS client, and starts the main loop. The main loop polls SQS for messages, processes them concurrently, and runs the S3 export process as a background task.
+The repository currently contains the following Python modules; the documentation below documents functions, classes and behavior inferred from the source files.
 
-### `settings.py`
+### src/ex8_consumer/settings.py
 
-This module manages the application's configuration. It loads environment variables from a `.env` file and defines settings for the database, AWS, SQS, and S3.
+This module centralizes configuration by reading environment variables at import time. Variables available:
 
-### `database.py`
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, `POSTGRES_PORT`, `DB_NAME` — used to construct JDBC connection URLs and credentials.
+- `AWS_DEFAULT_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET_NAME`, `AWS_ENDPOINT_URL` — used to configure S3 access (including LocalStack compatibility).
+- `SCHEMA_PATH` — path to the Avro schema file used by the application.
 
-This module handles all database interactions. It uses `tortoise-orm` to connect to the PostgreSQL database, initialize the schema, and save events. It also provides a function to get a database connection.
+Notes:
+- The module reads values directly from `os.getenv`. For local development, the project's `docker-compose.yml` sets `env_file: .env` so these come from `.env`.
+- If any required env var is missing, behavior is to propagate `None` which may later raise errors in the app — consider validating required settings at startup.
 
-### `sqs.py`
+### src/ex8_consumer/app.py
 
-This module provides functions to interact with AWS SQS. It includes functions to get an SQS client, receive messages from a queue, and delete messages from a queue.
+High-level responsibilities:
 
-### `export.py`
+- Start a SparkSession configured with Kafka, Avro, JDBC and Hadoop AWS dependencies via `spark.jars.packages`.
+- Load the Avro schema used to deserialize Kafka message payloads. The helper `_get_schema_str()` reads `settings.SCHEMA_PATH` and returns the schema as a string; it logs and raises if not found.
+- Construct JDBC connection URL and properties from `settings`.
+- Ensure the Postgres table `trusted.reclamacoes_cleaned` exists by writing an empty DataFrame with the expected schema and `mode='ignore'` (this leverages Spark JDBC's behavior to create the table when possible).
+- Define a streaming Kafka source using `spark.readStream.format('kafka')` and the configured bootstrap servers and topic.
+- Deserialize Avro payloads to a DataFrame using `from_avro(col('value'), AVRO_SCHEMA_STR)`.
+- Register the cleaned stream as a temporary view `reclamacoes_cleaned_stream` and write it to Postgres using `foreachBatch` with `.outputMode('update')`.
+- Build a SQL query that aggregates cleaned records and joins them with static reference tables (`empregados` and `bancos`) loaded over JDBC.
+- For `result_df`, configure Hadoop's S3A settings from `settings` and use a `foreachBatch` writer that:
+  - Writes micro-batches to Postgres (`trusted.reclamacoes_cleaned`) using JDBC. If append fails (commonly because the table does not exist), it attempts to create the table by writing a zero-row DataFrame with `mode='ignore'` and then retries the append.
+  - Writes micro-batches as Parquet files to S3 using the `s3a://` scheme. The code writes to `s3a://{S3_BUCKET_NAME}/reclamacoes/epoch={epoch_id}` by default.
+  - Uses `checkpointLocation` to enable stateful recovery.
 
-This module contains the logic for exporting data from PostgreSQL to S3. It runs as a background task and exports data every minute. It queries the database, converts the data to a Pandas DataFrame, and then to a Parquet file. The Parquet file is then uploaded to S3.
+Important implementation notes and gotchas:
 
-### `s3.py`
-
-This module provides functions to interact with AWS S3. It includes functions to get an S3 client and upload files to an S3 bucket.
-
-### `models.py`
-
-This module defines the database models using `tortoise-orm`.
-
-## Setup and Running Locally
-
-1.  **Install dependencies**:
-
-    ```bash
-    poetry install
-    ```
-
-2.  **Set up the environment**:
-
-    Create a `.env` file in the root of the project with the following variables:
-
-    ```
-    POSTGRES_USER=<your_postgres_user>
-    POSTGRES_PASSWORD=<your_postgres_password>
-    POSTGRES_HOST=<your_postgres_host>
-    DB_NAME=<your_database_name>
-    AWS_DEFAULT_REGION=<your_aws_region>
-    AWS_ACCESS_KEY_ID=<your_aws_access_key_id>
-    AWS_SECRET_ACCESS_KEY=<your_aws_secret_access_key>
-    SQS_QUEUE_URL=<your_sqs_queue_url>
-    S3_BUCKET_NAME=<your_s3_bucket_name>
-    ```
-
-3.  **Run the application**:
-
-    ```bash
-    python src/ex7_consumer/app.py
-    ```
-
-## Running with Docker
-
-1.  **Build the Docker image**:
-
-    ```bash
-    docker build -t ex7-consumer .
-    ```
-
-2.  **Run the Docker container**:
-
-    You can run the container with the environment variables in the `.env` file:
-
-    ```bash
-    docker run --env-file .env ex7-consumer
-    ```
+- The application uses `outputMode('complete')` for `result_df`. This mode emits the full result on each trigger and is appropriate for aggregations, but may be expensive for large results.
+- The S3A configuration in the code sets `fs.s3a.path.style.access=true` and disables SSL (`fs.s3a.connection.ssl.enabled=false`) which is convenient for LocalStack but should be adjusted for real AWS S3.
+- Creating tables via Spark JDBC depends on the permissions of the provided DB user. If the user lacks CREATE privileges, explicit DDL via a database client (psycopg2) would be necessary.
+- The Kafka bootstrap server is currently hard-coded to `broker:29092` in the code; change this to `KAFKA_BOOTSTRAP_SERVERS` from environment if you'd like runtime configurability.
 
 ## Configuration
 
--   `POSTGRES_USER`: The username for the PostgreSQL database.
--   `POSTGRES_PASSWORD`: The password for the PostgreSQL database.
--   `POSTGRES_HOST`: The host of the PostgreSQL database.
--   `DB_NAME`: The name of the database.
--   `AWS_DEFAULT_REGION`: The AWS region for SQS and S3.
--   `AWS_ACCESS_KEY_ID`: The AWS access key ID.
--   `AWS_SECRET_ACCESS_KEY`: The AWS secret access key.
--   `SQS_QUEUE_URL`: The URL of the SQS queue.
--   `S3_BUCKET_NAME`: The name of the S3 bucket for exports.
--   `SCHEMA_PATH`: The path to the Avro schema file.
+Add a `.env` file (example provided in repository) with the following variables:
 
-## SQL Query (`delivery.sql`)
+- AWS_ENDPOINT_URL (e.g., http://localhost:4566 for LocalStack)
+- AWS_ACCESS_KEY_ID
+- AWS_SECRET_ACCESS_KEY
+- AWS_DEFAULT_REGION
+- S3_BUCKET_NAME
+- POSTGRES_USER
+- POSTGRES_PASSWORD
+- POSTGRES_HOST
+- POSTGRES_PORT
+- DB_NAME
 
-The `delivery.sql` file contains a complex query that joins data from `reclamacoes_sqs_events`, `empregados`, and `bancos` tables. It performs several data cleaning and transformation steps, including:
+The project's `docker-compose.yml` already references `.env` via `env_file:` so these variables are loaded into the container at runtime.
 
--   Extracting and cleaning data from the JSON body of the SQS messages.
--   Deduplicating records based on `md5_body`.
--   Normalizing `cnpj` and `instituicao_financeira` fields.
--   Aggregating data by year, quarter, category, type, CNPJ, and financial institution.
--   Joining with employee and bank data.
+## Running locally with Docker
 
-The final result is a detailed report of financial complaints and related company information.
+1. Ensure your dependent services are available (Kafka, Postgres, S3/LocalStack). For development you can run them using docker-compose or separate containers.
+2. Set environment variables in `.env` (or export them in your shell).
+3. Start the service:
+
+```bash
+docker compose up --build
+```
+
+Notes:
+- If Kafka runs on a different host or under a different service name, update `KAFKA_BOOTSTRAP_SERVERS` in `docker-compose.yml` or update the hard-coded value in `app.py`.
+- For real S3, remove or adapt the S3A endpoint and SSL settings.

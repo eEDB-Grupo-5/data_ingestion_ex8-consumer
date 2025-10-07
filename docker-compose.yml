@@ -1,0 +1,24 @@
+services:
+  ex8-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ex8-consumer:local
+    container_name: ex8-consumer
+    networks: 
+      - data-network
+    env_file:
+      - .env
+    environment:
+      - JAVA_HOME=/usr/lib/jvm/default-java
+    volumes:
+      - ./:/app:cached
+      - ./logs:/app/logs
+    working_dir: /app
+    command: ["python", "-m", "src.ex8_consumer.app"]
+    restart: unless-stopped
+
+networks:
+  data-network:
+    name: data_network
+    external: true

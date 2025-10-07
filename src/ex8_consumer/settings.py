@@ -1,20 +1,21 @@
 
 import os
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
-load_dotenv("/home/bait/dev/ex7-consumer/.env")
+# load_dotenv("/home/bait/dev/ex7-consumer/.env")
 
 POSTGRES_USER = os.getenv("POSTGRES_USER")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT")
 DB_NAME = os.getenv("DB_NAME")
 AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION")
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-SQS_QUEUE_URL = os.getenv("SQS_QUEUE_URL")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+S3_BUCKET_NAME= os.getenv("S3_BUCKET_NAME")
+AWS_ENDPOINT_URL = os.getenv("AWS_ENDPOINT_URL")
 
-SCHEMA_PATH = "src/ex7_consumer/schemas/reclamacoes.avsc"
+SCHEMA_PATH = "src/ex8_consumer/schemas/reclamacoes.avsc"
 
 SCHEMA = {
     "ano": "int",
